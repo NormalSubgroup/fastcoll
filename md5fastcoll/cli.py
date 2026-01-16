@@ -47,10 +47,32 @@ def cmd_search_block1(ns: argparse.Namespace) -> int:
 
 
 def cmd_search_block2(ns: argparse.Namespace) -> int:
-    ihv = tuple(ns.ihv) if ns.ihv is not None else MD5_IV
+    if ns.ihv is None:
+        ihv = (0xC4DA537C, 0x1051DD8E, 0x42867DB3, 0x0D67B366)
+        print("search-block2: using sample IHV with IHV2[25]=1, IHV3[25]=0")
+    else:
+        ihv = tuple(ns.ihv)
+    from .verify import check_next_block_iv_conditions
+    ok_iv, issues_iv = check_next_block_iv_conditions(ihv)
+    if not ok_iv:
+        print(f"search-block2: invalid IHV for block2, issues={issues_iv}")
+        return 1
+    from .conditions import minimal_block2_q_constraints
+    qc = minimal_block2_q_constraints()
+    base = 3
+    Q = [0] * (base + 65)
+    IV0, IV1, IV2, IV3 = ihv
+    Q[base - 3] = IV0
+    Q[base - 2] = IV3
+    Q[base - 1] = IV2
+    Q[base + 0] = IV1
+    ok_iv_q, bad_iv_q = qc.check_all(Q, base=base, start_t=-2, end_t=1)
+    if not ok_iv_q:
+        print(f"search-block2: IHV violates Table A-3 (-2..0) conditions, bad={bad_iv_q}")
+        return 1
     ok, res, stats = search_block2_once(ihv, max_restarts=ns.restarts)
     print("search-block2 once:", ok, stats)
-    return 0
+    return 0 if ok else 1
 
 
 def cmd_search_collision(ns: argparse.Namespace) -> int:

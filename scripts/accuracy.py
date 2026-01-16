@@ -107,7 +107,7 @@ def check_block1_scaffold(trials: int, seed: int) -> bool:
 def check_block2_scaffold(trials: int, seed: int) -> bool:
     rng = random.Random(seed)
     searcher = Block2FullSearcher(rng)
-    sample_ihv = (0x12345678, 0x87654321, 0x02000000, 0x00000000)
+    sample_ihv = (0xC4DA537C, 0x1051DD8E, 0x42867DB3, 0x0D67B366)
     success = 0
     for _ in range(trials):
         Q = searcher._init_Q(sample_ihv)

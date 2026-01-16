@@ -169,7 +169,7 @@ def test_algorithm_6_2():
     
     # 使用一个满足IV条件的IHV作为输入
     # 这里使用一个示例IHV（实际应该从Block1搜索得到）
-    sample_ihv = (0x12345678, 0x87654321, 0x02000000, 0x00000000)  # IHV2[25]=1, IHV3[25]=0
+    sample_ihv = (0xC4DA537C, 0x1051DD8E, 0x42867DB3, 0x0D67B366)  # IHV2[25]=1, IHV3[25]=0
     
     searcher = Block2FullSearcher()
     print("尝试Block2搜索 (最多5次重启)...")

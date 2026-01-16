@@ -38,7 +38,7 @@ def bench_block1_step1_3(trials: int, seed: int) -> None:
 def bench_block2_step1_3(trials: int, seed: int) -> None:
     rng = random.Random(seed)
     searcher = Block2FullSearcher(rng)
-    sample_ihv = (0x12345678, 0x87654321, 0x02000000, 0x00000000)
+    sample_ihv = (0xC4DA537C, 0x1051DD8E, 0x42867DB3, 0x0D67B366)
     start = time.time()
     success = 0
     for _ in range(trials):
