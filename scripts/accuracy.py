@@ -62,6 +62,29 @@ def check_tables() -> bool:
     return ok
 
 
+def check_symbol_binding() -> bool:
+    qc = minimal_block1_q_constraints()
+    base = 3
+    Q = [0] * (base + 65)
+    for t, cond in qc.conds.items():
+        if 46 <= t <= 63:
+            head = cond.pattern[0]
+            if head in ("I", "K"):
+                Q[base + t] |= (1 << 31)
+            elif head == "J":
+                Q[base + t] &= ~(1 << 31)
+    ok_consistent, _ = qc.check_all(Q, base=base, start_t=46, end_t=64)
+    # flip one I-bit to force inconsistency
+    for t, cond in qc.conds.items():
+        if 46 <= t <= 63 and cond.pattern[0] in ("I", "K"):
+            Q[base + t] &= ~(1 << 31)
+            break
+    ok_inconsistent, _ = qc.check_all(Q, base=base, start_t=46, end_t=64)
+    ok = ok_consistent and not ok_inconsistent
+    print(f"symbol_binding: {'PASS' if ok else 'FAIL'}")
+    return ok
+
+
 def check_block1_scaffold(trials: int, seed: int) -> bool:
     rng = random.Random(seed)
     searcher = Block1FullSearcher(rng)
@@ -111,6 +134,7 @@ def main() -> int:
     ok &= check_md5_vectors()
     ok &= check_inverse()
     ok &= check_tables()
+    ok &= check_symbol_binding()
     ok &= check_block1_scaffold(args.trials, args.seed)
     ok &= check_block2_scaffold(args.trials, args.seed)
 
