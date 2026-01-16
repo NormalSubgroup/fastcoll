@@ -10,7 +10,7 @@ from .core import (
     MASK32,
 )
 from .conditions import BitCond
-from .verify import check_T_restrictions_full, check_next_block_iv_conditions
+from .verify import check_T_restrictions_tail, check_next_block_iv_conditions
 from .stevens_full import Block1FullSearcher, Block2FullSearcher, search_collision_full
 
 
@@ -97,7 +97,7 @@ def search_block1_once(
     ok = res is not None
     stats: Dict[str, object] = {"ok": ok, "restarts": max_restarts}
     if res is not None:
-        ok_t, issues_t = check_T_restrictions_full(res.trace)
+        ok_t, issues_t = check_T_restrictions_tail(res.trace)
         ok_iv, issues_iv = check_next_block_iv_conditions(res.ihv)
         stats.update({"okT": ok_t, "okIV": ok_iv, "issuesT": issues_t, "issuesIV": issues_iv})
     return ok, res, stats
@@ -113,7 +113,7 @@ def search_block2_once(
     ok = res is not None
     stats: Dict[str, object] = {"ok": ok, "restarts": max_restarts}
     if res is not None:
-        ok_t, issues_t = check_T_restrictions_full(res.trace)
+        ok_t, issues_t = check_T_restrictions_tail(res.trace)
         stats.update({"okT": ok_t, "issuesT": issues_t})
     return ok, res, stats
 

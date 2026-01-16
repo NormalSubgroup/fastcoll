@@ -7,7 +7,7 @@ import math
 
 from .core import MASK32, MD5_IV, rl, rr, ft, wt_index, compress_block
 from .conditions import QConditions, minimal_block1_q_constraints, minimal_block2_q_constraints
-from .verify import check_T_restrictions_full, check_next_block_iv_conditions
+from .verify import check_T_restrictions_tail, check_next_block_iv_conditions
 
 # Local copies consistent with core
 _RC = (
@@ -343,9 +343,9 @@ class Block1FullSearcher:
                 continue
             ihv2, trace = compress_block(ihv, words)
             ok_q, _ = self.qc.check_all(trace["Q"], base=3)
-            ok_t, _ = check_T_restrictions_full(trace)
+            ok_tail, _ = check_T_restrictions_tail(trace)
             ok_iv, _ = check_next_block_iv_conditions(ihv2)
-            if ok_q and ok_t and ok_iv:
+            if ok_q and ok_tail and ok_iv:
                 return True
             Q[base+9], Q[base+10] = old_q9, old_q10
             for idx, val in old_m.items():
@@ -520,8 +520,8 @@ class Block2FullSearcher:
                 continue
             ihv2, trace = compress_block(ihv, words)
             ok_q, _ = self.qc.check_all(trace["Q"], base=3)
-            ok_t, _ = check_T_restrictions_full(trace)
-            if ok_q and ok_t:
+            ok_tail, _ = check_T_restrictions_tail(trace)
+            if ok_q and ok_tail:
                 return True
             Q[base+9], Q[base+10] = old_q9, old_q10
             for idx, val in old_m.items():
@@ -538,6 +538,10 @@ class Block2FullSearcher:
 
     def search(self, ihv: Tuple[int,int,int,int], max_restarts: int = 100) -> Optional[BlockResult]:
         # Strict Algorithm 6-2
+        init_Q = self._init_Q(ihv)
+        ok_init, _ = self.qc.check_all(init_Q, base=3, start_t=-2, end_t=1)
+        if not ok_init:
+            return None
         for _ in range(max_restarts):
             Q = self._init_Q(ihv)
             m: List[Optional[int]] = [None]*16

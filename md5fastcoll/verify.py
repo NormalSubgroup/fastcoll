@@ -63,6 +63,17 @@ def check_T_restrictions_full(trace: Dict[str, List[int]]) -> Tuple[bool, Dict[s
     return (len(bad) == 0), bad
 
 
+def check_T_restrictions_tail(trace: Dict[str, List[int]]) -> Tuple[bool, Dict[str, int]]:
+    """Check only T22[17] and T34[15], as required in Alg. 6-1/6-2 step 4."""
+    T = trace["T"]
+    bad: Dict[str, int] = {}
+    if bit(T[22], 17) != 0:
+        bad["T22[17]"] = bit(T[22], 17)
+    if bit(T[34], 15) != 0:
+        bad["T34[15]"] = bit(T[34], 15)
+    return (len(bad) == 0), bad
+
+
 def check_next_block_iv_conditions(ihv_after_block1: Tuple[int, int, int, int]) -> Tuple[bool, Dict[str, int]]:
     # From section 5: IHV2[25] == 1 and IHV3[25] == 0 are needed for block 2 best path
     _, _, IHV2, IHV3 = ihv_after_block1
