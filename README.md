@@ -30,6 +30,16 @@
 - 论文一致性检查：
   - python scripts/test_paper_compliance.py --skip-search
 
+**性能数据**
+- 环境: Apple M1 Pro, Darwin 23.6.0 arm64, Python 3.14.2
+- 命令: `python scripts/perf.py --trials 50 --budget 8192 --seed 123`
+- 结果:
+```text
+block1_step1_3: trials=50 success=41 time=1.136s rate=44.00/s
+block2_step1_3: trials=50 success=2 time=2.487s rate=20.11/s
+block1_step4: budget=8192 ok=False time=0.527s rate=15541.20 it/s
+```
+
 注意：
 
 - 搜索复杂度较高，通常需要提高 `--restarts` 或 `scripts/perf.py --budget` 以观察更深层的成功率变化。
