@@ -98,6 +98,7 @@ fastcoll 子命令支持三种引擎
 
 - Marc Stevens Fast Collision Attack on MD5
   - 本仓库包含 fastcoll.pdf
+  - Paper URL https://www.marc-stevens.nl/research/papers/eprint-2006-104-S.pdf
 - HashClash 源码仓库
   - https://github.com/cr-marcstevens/hashclash
 - Python fastcoll 引擎主要移植自 HashClash 的 src/md5fastcoll 目录
