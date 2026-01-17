@@ -11,18 +11,7 @@ from pathlib import Path
 from typing import List, Tuple
 
 from .native_fastcoll import HASHCLASH_REPO_URL
-
-
-def _project_root() -> Path:
-    return Path(__file__).resolve().parent.parent
-
-
-def _lib_suffix() -> str:
-    if sys.platform == "darwin":
-        return ".dylib"
-    if sys.platform.startswith("win"):
-        return ".dll"
-    return ".so"
+from .paths import lib_suffix, project_root
 
 
 def find_md5_fastcoll_lib(explicit: str | None = None) -> Path | None:
@@ -46,8 +35,8 @@ def find_md5_fastcoll_lib(explicit: str | None = None) -> Path | None:
         if p.exists():
             return p
 
-    root = _project_root()
-    suffix = _lib_suffix()
+    root = project_root()
+    suffix = lib_suffix()
     for rel in (Path(f"tools/md5_fastcoll_lib{suffix}"), Path(f"tools/bin/md5_fastcoll_lib{suffix}")):
         p = root / rel
         if p.exists():
@@ -70,12 +59,12 @@ def build_md5_fastcoll_lib(
     out_path = out_path.expanduser().resolve()
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    wrapper = _project_root() / "tools" / "md5_fastcoll_lib_wrap.cpp"
+    wrapper = project_root() / "tools" / "md5_fastcoll_lib_wrap.cpp"
     if not wrapper.exists():
         raise FileNotFoundError(f"wrapper source not found: {wrapper}")
 
     cxx = os.getenv("CXX") or shutil.which("clang++") or shutil.which("g++") or "c++"
-    suffix = _lib_suffix()
+    suffix = lib_suffix()
     if out_path.suffix != suffix:
         out_path = out_path.with_suffix(suffix)
 

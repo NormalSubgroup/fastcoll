@@ -7,11 +7,9 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
+from .paths import project_root
+
 HASHCLASH_REPO_URL = "https://github.com/cr-marcstevens/hashclash"
-
-
-def _project_root() -> Path:
-    return Path(__file__).resolve().parent.parent
 
 
 def find_md5_fastcoll_bin(explicit: str | None = None) -> Path | None:
@@ -36,7 +34,7 @@ def find_md5_fastcoll_bin(explicit: str | None = None) -> Path | None:
         if p.exists():
             return p
 
-    root = _project_root()
+    root = project_root()
     for rel in (Path("tools/md5_fastcoll"), Path("tools/bin/md5_fastcoll")):
         p = root / rel
         if p.exists():

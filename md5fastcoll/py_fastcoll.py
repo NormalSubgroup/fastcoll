@@ -5,6 +5,8 @@ import os
 import time
 from typing import List, Tuple
 
+from .fastcoll import apply_fastcoll_delta
+
 try:
     import numpy as _np
 except ImportError:  # pragma: no cover
@@ -1307,19 +1309,11 @@ def reverse_step_first_round(Q: List[int], t: int, ac: int, rc: int) -> int:
 
 
 def apply_delta_block0(block: List[int]) -> List[int]:
-    out = list(block)
-    out[4] = (out[4] + (1 << 31)) & MASK32
-    out[11] = (out[11] + (1 << 15)) & MASK32
-    out[14] = (out[14] + (1 << 31)) & MASK32
-    return out
+    return apply_fastcoll_delta(block, second_block=False)
 
 
 def apply_delta_block1(block: List[int]) -> List[int]:
-    out = list(block)
-    out[4] = (out[4] + (1 << 31)) & MASK32
-    out[11] = (out[11] - (1 << 15)) & MASK32
-    out[14] = (out[14] + (1 << 31)) & MASK32
-    return out
+    return apply_fastcoll_delta(block, second_block=True)
 
 
 def find_block0(rng: XorShift64, IV: Tuple[int, int, int, int]) -> List[int]:

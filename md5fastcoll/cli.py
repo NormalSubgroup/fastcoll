@@ -395,12 +395,13 @@ def main(argv: List[str] | None = None) -> int:
     sNL.add_argument("--repo", type=str, default=None, help="HashClash git repo URL")
     def _cmd_build_native_lib(ns: argparse.Namespace) -> int:
         from pathlib import Path
-        from .hashclash_lib import build_md5_fastcoll_lib, _lib_suffix
+        from .hashclash_lib import build_md5_fastcoll_lib
         from .native_fastcoll import HASHCLASH_REPO_URL
+        from .paths import lib_suffix
 
         out = ns.out
         if out is None:
-            out = str(Path("tools") / f"md5_fastcoll_lib{_lib_suffix()}")
+            out = str(Path("tools") / f"md5_fastcoll_lib{lib_suffix()}")
         default_repo = "tools/hashclash-src" if Path("tools/hashclash-src").exists() else HASHCLASH_REPO_URL
         repo = ns.repo or default_repo
         built = build_md5_fastcoll_lib(Path(out), repo_url=repo)

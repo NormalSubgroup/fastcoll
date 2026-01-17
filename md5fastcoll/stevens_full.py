@@ -21,6 +21,24 @@ _AC = [int(abs(math.sin(i + 1)) * (1 << 32)) & MASK32 for i in range(64)]
 QList = List[Optional[int]]
 Symbols = Dict[str, Optional[int]]
 
+
+def _init_Q_from_ihv(ihv: Tuple[int, int, int, int], *, base: int = 3) -> QList:
+    Q: QList = [None] * (base + 65)
+    IV0, IV1, IV2, IV3 = ihv
+    Q[base - 3] = IV0
+    Q[base - 2] = IV3
+    Q[base - 1] = IV2
+    Q[base + 0] = IV1
+    return Q
+
+
+def _q_req(Q: QList, idx: int, *, base: int = 3) -> int:
+    val = Q[base + idx]
+    if val is None:
+        raise ValueError(f"Q[{idx}] is not set")
+    return val & MASK32
+
+
 @dataclass
 class _PatternSpec:
     fixed_mask: int
@@ -258,17 +276,11 @@ def _compute_W_from_Q(Q: QList, i: int) -> int:
     if len(Q) <= base + i + 1:
         raise ValueError(f"Q array too short for step {i}")
 
-    def _req(idx: int) -> int:
-        val = Q[base + idx]
-        if val is None:
-            raise ValueError(f"Q[{idx}] is not set")
-        return val & MASK32
-
-    Qt = _req(i)
-    Qtm1 = _req(i - 1)
-    Qtm2 = _req(i - 2)
-    Qtm3 = _req(i - 3)
-    Qt1 = _req(i + 1)
+    Qt = _q_req(Q, i, base=base)
+    Qtm1 = _q_req(Q, i - 1, base=base)
+    Qtm2 = _q_req(Q, i - 2, base=base)
+    Qtm3 = _q_req(Q, i - 3, base=base)
+    Qt1 = _q_req(Q, i + 1, base=base)
     
     # Rt = Qt+1 - Qt (rotation after addition)
     Rt = (Qt1 - Qt) & MASK32
@@ -292,19 +304,13 @@ def _forward_step_set_Q(
     base = 3
     symbols = symbols if symbols is not None else {}
 
-    def _req(idx: int) -> int:
-        val = Q[base + idx]
-        if val is None:
-            raise ValueError(f"Q[{idx}] is not set")
-        return val & MASK32
-
     idx = wt_index(t)
     if idx >= len(m) or m[idx] is None:
         return False
-    Qt = _req(t)
-    Qtm1 = _req(t - 1)
-    Qtm2 = _req(t - 2)
-    Qtm3 = _req(t - 3)
+    Qt = _q_req(Q, t, base=base)
+    Qtm1 = _q_req(Q, t - 1, base=base)
+    Qtm2 = _q_req(Q, t - 2, base=base)
+    Qtm3 = _q_req(Q, t - 3, base=base)
     Tt = (ft(t, Qt, Qtm1, Qtm2) + Qtm3 + _AC[t] + (m[idx] & MASK32)) & MASK32
     Qt1 = (Qt + rl(Tt, _RC[t])) & MASK32
     if qc is not None and (t + 1) in qc.conds:
@@ -340,13 +346,6 @@ class Block1FullSearcher:
     def __init__(self, rng: Optional[random.Random] = None):
         self.rng = rng or random.Random()
         self.qc = minimal_block1_q_constraints()
-
-    def _init_Q(self, ihv: Tuple[int,int,int,int]) -> QList:
-        base = 3
-        Q: QList = [None] * (base + 65)
-        IV0,IV1,IV2,IV3 = ihv
-        Q[base-3]=IV0; Q[base-2]=IV3; Q[base-1]=IV2; Q[base+0]=IV1
-        return Q
 
     def step1_choose_Qs(self, Q: QList, symbols: Optional[Symbols] = None) -> bool:
         # Algorithm 6-1 Step 1: Choose Q1, Q3, ..., Q16 fulfilling conditions
@@ -555,7 +554,7 @@ class Block1FullSearcher:
     def search(self, ihv: Tuple[int,int,int,int] = MD5_IV, max_restarts: int = 100) -> Optional[BlockResult]:
         # Strict Algorithm 6-1
         for _ in range(max_restarts):
-            Q = self._init_Q(ihv)
+            Q = _init_Q_from_ihv(ihv)
             m: List[Optional[int]] = [None]*16
             symbols: Symbols = {}
             if not self.step1_choose_Qs(Q, symbols):
@@ -578,13 +577,6 @@ class Block2FullSearcher:
     def __init__(self, rng: Optional[random.Random] = None):
         self.rng = rng or random.Random()
         self.qc = minimal_block2_q_constraints()
-
-    def _init_Q(self, ihv: Tuple[int,int,int,int]) -> QList:
-        base = 3
-        Q: QList = [None] * (base + 65)
-        IV0,IV1,IV2,IV3 = ihv
-        Q[base-3]=IV0; Q[base-2]=IV3; Q[base-1]=IV2; Q[base+0]=IV1
-        return Q
 
     def step1_choose_Q2_to_Q16(self, Q: QList, symbols: Optional[Symbols] = None) -> bool:
         # Algorithm 6-2 Step 1: Choose Q2, ..., Q16 fulfilling conditions 
@@ -711,12 +703,12 @@ class Block2FullSearcher:
 
     def search(self, ihv: Tuple[int,int,int,int], max_restarts: int = 100) -> Optional[BlockResult]:
         # Strict Algorithm 6-2
-        init_Q = self._init_Q(ihv)
+        init_Q = _init_Q_from_ihv(ihv)
         ok_init, _ = self.qc.check_all(init_Q, base=3, start_t=-2, end_t=1)
         if not ok_init:
             return None
         for _ in range(max_restarts):
-            Q = self._init_Q(ihv)
+            Q = _init_Q_from_ihv(ihv)
             m: List[Optional[int]] = [None]*16
             symbols: Symbols = {}
             if not self.step1_choose_Q2_to_Q16(Q, symbols):
