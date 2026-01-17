@@ -41,9 +41,14 @@ def cmd_demo_inverse(_: argparse.Namespace) -> int:
 
 def cmd_search_block1(ns: argparse.Namespace) -> int:
     ihv = tuple(ns.ihv) if ns.ihv is not None else MD5_IV
-    ok, res, stats = search_block1_once(ihv, max_restarts=ns.restarts)
+    import random
+
+    rng = random.Random(ns.seed) if ns.seed is not None else None
+    ok, res, stats = search_block1_once(ihv, rng=rng, max_restarts=ns.restarts)
     print("search-block1 once:", ok, stats)
-    return 0
+    if not ok:
+        print("search-block1: no solution found; try increasing --restarts")
+    return 0 if ok else 1
 
 
 def cmd_search_block2(ns: argparse.Namespace) -> int:
@@ -70,8 +75,13 @@ def cmd_search_block2(ns: argparse.Namespace) -> int:
     if not ok_iv_q:
         print(f"search-block2: IHV violates Table A-3 (-2..0) conditions, bad={bad_iv_q}")
         return 1
-    ok, res, stats = search_block2_once(ihv, max_restarts=ns.restarts)
+    import random
+
+    rng = random.Random(ns.seed) if ns.seed is not None else None
+    ok, res, stats = search_block2_once(ihv, rng=rng, max_restarts=ns.restarts)
     print("search-block2 once:", ok, stats)
+    if not ok:
+        print("search-block2: no solution found; try --restarts 500+")
     return 0 if ok else 1
 
 
@@ -273,11 +283,13 @@ def main(argv: List[str] | None = None) -> int:
     s3 = sub.add_parser("search-block1", help="Block1 搜索（算法 6-1，真实实现）")
     s3.add_argument("--restarts", type=int, default=50)
     s3.add_argument("--ihv", nargs=4, type=lambda x: int(x, 0), default=None, help="4x 32-bit hex words")
+    s3.add_argument("--seed", type=int, default=None, help="固定随机种子以便复现")
     s3.set_defaults(func=cmd_search_block1)
 
     s4 = sub.add_parser("search-block2", help="Block2 搜索（算法 6-2，真实实现）")
     s4.add_argument("--restarts", type=int, default=50)
     s4.add_argument("--ihv", nargs=4, type=lambda x: int(x, 0), default=None, help="4x 32-bit hex words")
+    s4.add_argument("--seed", type=int, default=None, help="固定随机种子以便复现")
     s4.set_defaults(func=cmd_search_block2)
 
     # Full Stevens (6-1/6-2) commands

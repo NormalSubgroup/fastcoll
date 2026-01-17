@@ -17,7 +17,7 @@
   - python -m md5fastcoll.cli demo-inverse
 - Block1/Block2 搜索（算法 6-1/6-2）：
   - python -m md5fastcoll.cli search-block1 --restarts 50
-  - python -m md5fastcoll.cli search-block2 --restarts 50 --ihv 0xC4DA537C 0x1051DD8E 0x42867DB3 0x0D67B366
+  - python -m md5fastcoll.cli search-block2 --restarts 500 --ihv 0xC4DA537C 0x1051DD8E 0x42867DB3 0x0D67B366
 - 两块管线（较慢）：
   - python -m md5fastcoll.cli search-collision --restarts 500
 - 生成 fastcoll 兼容碰撞文件（支持前缀）：
