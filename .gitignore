@@ -3,3 +3,8 @@ __pycache__/
 *.pyc
 .pytest_cache/
 fastcoll.txt
+*.skill
+tools/md5_fastcoll
+tools/md5_fastcoll_lib.*
+tools/bin/
+tools/hashclash-src/

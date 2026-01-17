@@ -82,6 +82,167 @@ def cmd_search_collision(ns: argparse.Namespace) -> int:
     return 0 if ok else 1
 
 
+def cmd_fastcoll(ns: argparse.Namespace) -> int:
+    from pathlib import Path
+    import os
+
+    from .core import MD5_IV
+    from .fastcoll import (
+        FASTCOLL_DEFAULT_IHV_HEX,
+        build_collision_messages,
+        default_output_names,
+        format_ihv_hex,
+        ihv_after_prefix,
+        parse_ihv_hex,
+    )
+    from .md5 import md5_hex
+    from .native_fastcoll import find_md5_fastcoll_bin, run_md5_fastcoll
+
+    prefix_padded = b""
+    ihv = MD5_IV
+    out1: Path
+    out2: Path
+
+    if ns.prefixfile:
+        prefix_path = Path(ns.prefixfile)
+        if not prefix_path.exists():
+            print(f"fastcoll: prefix file not found: {prefix_path}")
+            return 1
+        ihv, prefix_padded = ihv_after_prefix(prefix_path.read_bytes(), MD5_IV)
+        if ns.out is None:
+            out1, out2 = default_output_names(prefix_path)
+        else:
+            out1, out2 = Path(ns.out[0]), Path(ns.out[1])
+        if not ns.quiet:
+            print(f"fastcoll: using prefix file {prefix_path} (padded to {len(prefix_padded)} bytes)")
+    else:
+        if ns.ihv:
+            ihv = parse_ihv_hex(ns.ihv)
+        elif ns.md5_iv:
+            ihv = MD5_IV
+        else:
+            ihv = parse_ihv_hex(FASTCOLL_DEFAULT_IHV_HEX)
+        if ns.out is None:
+            out1, out2 = Path("msg1.bin"), Path("msg2.bin")
+        else:
+            out1, out2 = Path(ns.out[0]), Path(ns.out[1])
+
+    if not ns.quiet:
+        print(f"fastcoll: using IHV {format_ihv_hex(ihv)}")
+
+    engine = ns.engine
+    bin_path = find_md5_fastcoll_bin(ns.native_bin)
+
+    lib_path = None
+    if engine in ("auto", "ctypes") or ns.native_lib is not None:
+        from .hashclash_lib import find_md5_fastcoll_lib
+
+        lib_path = find_md5_fastcoll_lib(ns.native_lib)
+
+    if engine == "auto":
+        if bin_path is not None:
+            engine = "native"
+        elif lib_path is not None:
+            engine = "ctypes"
+        else:
+            engine = "python"
+
+    if engine == "native":
+        if bin_path is None:
+            print("fastcoll: native engine requested but no `md5_fastcoll` binary found")
+            print("fastcoll: run `python -m md5fastcoll.cli build-native` or set `MD5_FASTCOLL_BIN`")
+            return 1
+        run_md5_fastcoll(
+            bin_path,
+            out1=out1,
+            out2=out2,
+            prefixfile=Path(ns.prefixfile) if ns.prefixfile else None,
+            ihv_hex=format_ihv_hex(ihv),
+            seed=ns.seed,
+            quiet=ns.quiet,
+        )
+        # verify outputs
+        h1 = md5_hex(out1.read_bytes())
+        h2 = md5_hex(out2.read_bytes())
+        if h1 != h2:
+            print("fastcoll: native mismatch, computed hashes differ")
+            print(f"  {out1}={h1}")
+            print(f"  {out2}={h2}")
+            return 1
+        if not ns.quiet:
+            print(f"fastcoll: wrote {out1} and {out2}")
+            print(f"fastcoll: md5={h1}")
+        return 0
+
+    if engine == "ctypes":
+        # HashClash md5fastcoll via ctypes shared library
+        if lib_path is None:
+            print("fastcoll: ctypes engine requested but no `md5_fastcoll_lib` shared library found")
+            print("fastcoll: run `python -m md5fastcoll.cli build-native-lib` or set `MD5_FASTCOLL_LIB`")
+            print("fastcoll: or pass `fastcoll --engine ctypes --native-lib /path/to/md5_fastcoll_lib.{so|dylib}`")
+            return 1
+
+        from .hashclash_lib import HashClashFastCollLib
+
+        lib = HashClashFastCollLib(lib_path)
+        b0, b1 = lib.find_collision_blocks(ihv, seed=ns.seed)
+        msg1, msg2 = build_collision_messages(prefix_padded, b0, b1)
+        h1 = md5_hex(msg1)
+        h2 = md5_hex(msg2)
+        if h1 != h2:
+            print("fastcoll: internal mismatch, computed hashes differ (native-lib)")
+            print(f"  msg1={h1}")
+            print(f"  msg2={h2}")
+            return 1
+
+        out1.write_bytes(msg1)
+        out2.write_bytes(msg2)
+        if not ns.quiet:
+            print(f"fastcoll: wrote {out1} and {out2}")
+            print(f"fastcoll: md5={h1}")
+        return 0
+
+    # python engine (HashClash md5_fastcoll port, pure Python with optional NumPy/Numba)
+    if ns.native_lib is not None and not ns.quiet:
+        print("fastcoll: note: --native-lib is ignored when --engine python (use --engine ctypes)")
+
+    from .numba_fastcoll import find_collision_blocks_numba, numba_available
+    from .py_fastcoll import find_collision_blocks, find_collision_blocks_parallel
+
+    jobs = int(ns.jobs or 0)
+    if jobs < 0:
+        print("fastcoll: --jobs must be >= 0")
+        return 1
+    if jobs == 0:
+        jobs = 1 if ns.seed is not None else (os.cpu_count() or 1)
+
+    if jobs <= 1:
+        if numba_available():
+            if not ns.quiet:
+                print("fastcoll: using python+numba engine (JIT)")
+            b0, b1 = find_collision_blocks_numba(ihv, seed=ns.seed)
+        else:
+            b0, b1 = find_collision_blocks(ihv, seed=ns.seed)
+    else:
+        b0, b1 = find_collision_blocks_parallel(ihv, seed=ns.seed, jobs=jobs)
+
+    msg1, msg2 = build_collision_messages(prefix_padded, b0, b1)
+    h1 = md5_hex(msg1)
+    h2 = md5_hex(msg2)
+    if h1 != h2:
+        print("fastcoll: internal mismatch, computed hashes differ")
+        print(f"  msg1={h1}")
+        print(f"  msg2={h2}")
+        return 1
+
+    out1.write_bytes(msg1)
+    out2.write_bytes(msg2)
+    if not ns.quiet:
+        print(f"fastcoll: wrote {out1} and {out2}")
+        print(f"fastcoll: md5={h1}")
+    return 0
+
+
 def main(argv: List[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="md5fastcoll")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -134,9 +295,16 @@ def main(argv: List[str] | None = None) -> int:
     sf2 = sub.add_parser("search-collision-full", help="严格匹配论文 6-1/6-2 的两块管线（需完整条件表）")
     sf2.add_argument("--seed", type=int, default=None)
     sf2.add_argument("--restarts", type=int, default=1000)
+    sf2.add_argument("--block1-restarts", type=int, default=50)
+    sf2.add_argument("--block2-restarts", type=int, default=100)
     def _cmd_collision_full(ns: argparse.Namespace) -> int:
         from .stevens_full import search_collision_full
-        r = search_collision_full(seed=ns.seed, max_restarts=ns.restarts)
+        r = search_collision_full(
+            seed=ns.seed,
+            max_restarts=ns.restarts,
+            block1_restarts=ns.block1_restarts,
+            block2_restarts=ns.block2_restarts,
+        )
         ok = r is not None
         print("search-collision-full:", ok)
         if ok:
@@ -183,6 +351,142 @@ def main(argv: List[str] | None = None) -> int:
         print("stevens-collision:", ok)
         return 0 if ok else 1
     s10.set_defaults(func=_cmd_stev_col)
+
+    s11 = sub.add_parser("fastcoll", help="生成与 fastcoll 兼容的碰撞文件对")
+    s11.add_argument("--prefixfile", "-p", type=str, default=None, help="前缀文件（按块零填充）")
+    s11.add_argument("--ihv", type=str, default=None, help="32 hex chars IHV (little-endian)")
+    s11.add_argument("--md5-iv", action="store_true", help="使用标准 MD5 IV 作为初始值")
+    s11.add_argument("--out", "-o", nargs=2, default=None, metavar=("MSG1", "MSG2"))
+    s11.add_argument("--seed", type=int, default=None)
+    s11.add_argument("--engine", choices=["auto", "native", "ctypes", "python"], default="auto", help="碰撞生成引擎")
+    s11.add_argument("--native-bin", type=str, default=None, help="本地 md5_fastcoll 可执行文件路径（或使用 MD5_FASTCOLL_BIN）")
+    s11.add_argument("--native-lib", type=str, default=None, help="HashClash md5fastcoll 共享库路径（ctypes 引擎；或使用 MD5_FASTCOLL_LIB）")
+    s11.add_argument("--jobs", type=int, default=0, help="python 引擎并行进程数（0=自动；指定 --seed 时默认 1）")
+    s11.add_argument("--restarts", type=int, default=1000)
+    s11.add_argument("--block1-restarts", type=int, default=50)
+    s11.add_argument("--block2-restarts", type=int, default=100)
+    s11.add_argument("--quiet", "-q", action="store_true")
+    s11.set_defaults(func=cmd_fastcoll)
+
+    sN = sub.add_parser("build-native", help="构建本地 md5_fastcoll（HashClash）用于加速")
+    sN.add_argument("--out", type=str, default="tools/md5_fastcoll", help="输出二进制路径")
+    sN.add_argument("--repo", type=str, default=None, help="HashClash git repo URL")
+    sN.add_argument("--jobs", type=int, default=None, help="make -j 并发数")
+    def _cmd_build_native(ns: argparse.Namespace) -> int:
+        from pathlib import Path
+        from .native_fastcoll import HASHCLASH_REPO_URL, build_md5_fastcoll
+        repo = ns.repo or HASHCLASH_REPO_URL
+        out = build_md5_fastcoll(Path(ns.out), repo_url=repo, jobs=ns.jobs)
+        print(f"build-native: wrote {out}")
+        return 0
+    sN.set_defaults(func=_cmd_build_native)
+
+    sNL = sub.add_parser("build-native-lib", help="构建 HashClash md5fastcoll 共享库（ctypes）用于 python 引擎加速")
+    sNL.add_argument("--out", type=str, default=None, help="输出共享库路径（默认 tools/md5_fastcoll_lib.{so|dylib}）")
+    sNL.add_argument("--repo", type=str, default=None, help="HashClash git repo URL")
+    def _cmd_build_native_lib(ns: argparse.Namespace) -> int:
+        from pathlib import Path
+        from .hashclash_lib import build_md5_fastcoll_lib, _lib_suffix
+        from .native_fastcoll import HASHCLASH_REPO_URL
+
+        out = ns.out
+        if out is None:
+            out = str(Path("tools") / f"md5_fastcoll_lib{_lib_suffix()}")
+        default_repo = "tools/hashclash-src" if Path("tools/hashclash-src").exists() else HASHCLASH_REPO_URL
+        repo = ns.repo or default_repo
+        built = build_md5_fastcoll_lib(Path(out), repo_url=repo)
+        print(f"build-native-lib: wrote {built}")
+        return 0
+    sNL.set_defaults(func=_cmd_build_native_lib)
+
+    sB = sub.add_parser("bench-fastcoll", help="基准测试：重复运行 fastcoll 并记录耗时")
+    sB.add_argument("--mode", choices=["md5iv", "random", "recommended", "all"], default="md5iv")
+    sB.add_argument("--runs", type=int, default=1, help="每种模式运行次数")
+    sB.add_argument("--restarts", type=int, default=1000)
+    sB.add_argument("--block1-restarts", type=int, default=50)
+    sB.add_argument("--block2-restarts", type=int, default=100)
+    sB.add_argument("--seed", type=int, default=None)
+    sB.add_argument("--no-verify", action="store_true", help="跳过生成消息的 MD5 验证")
+    sB.add_argument("--timings-out", type=str, default=None, help="将耗时追加写入文件")
+    sB.add_argument("--quiet", "-q", action="store_true")
+    def _cmd_bench_fastcoll(ns: argparse.Namespace) -> int:
+        from pathlib import Path
+        import random
+        import time
+
+        from .core import MD5_IV
+        from .fastcoll import (
+            build_collision_messages,
+            format_ihv_hex,
+            random_iv,
+            recommended_iv,
+        )
+        from .md5 import md5_hex
+        from .stevens_full import search_collision_full
+
+        if ns.runs < 1:
+            print("bench-fastcoll: --runs must be >= 1")
+            return 1
+
+        modes = ["md5iv", "recommended", "random"] if ns.mode == "all" else [ns.mode]
+        rng = random.Random(ns.seed)
+
+        def _timings_path(mode: str) -> Path | None:
+            if ns.timings_out is None:
+                return None
+            template = ns.timings_out
+            if "{mode}" in template:
+                return Path(template.format(mode=mode))
+            if ns.mode == "all":
+                base = Path(template)
+                suffix = base.suffix
+                stem = base.stem
+                return base.with_name(f"{stem}_{mode}{suffix}")
+            return Path(template)
+
+        for mode in modes:
+            timing_path = _timings_path(mode)
+            for run_idx in range(1, ns.runs + 1):
+                if mode == "md5iv":
+                    ihv = MD5_IV
+                elif mode == "recommended":
+                    ihv = recommended_iv(rng)
+                else:
+                    ihv = random_iv(rng)
+                run_seed = rng.getrandbits(64)
+                if not ns.quiet:
+                    print(f"bench-fastcoll: mode={mode} run={run_idx}/{ns.runs} ihv={format_ihv_hex(ihv)}")
+
+                start = time.perf_counter()
+                res = search_collision_full(
+                    seed=run_seed,
+                    max_restarts=ns.restarts,
+                    ihv=ihv,
+                    block1_restarts=ns.block1_restarts,
+                    block2_restarts=ns.block2_restarts,
+                )
+                elapsed = time.perf_counter() - start
+                if res is None:
+                    print(f"bench-fastcoll: mode={mode} run={run_idx} FAIL (increase --restarts)")
+                    return 1
+                if not ns.no_verify:
+                    b1, b2 = res
+                    msg1, msg2 = build_collision_messages(b"", b1.m_words, b2.m_words)
+                    h1 = md5_hex(msg1)
+                    h2 = md5_hex(msg2)
+                    if h1 != h2:
+                        print("bench-fastcoll: verification failed (hash mismatch)")
+                        print(f"  msg1={h1}")
+                        print(f"  msg2={h2}")
+                        return 1
+                if not ns.quiet:
+                    print(f"bench-fastcoll: mode={mode} run={run_idx} time={elapsed:.3f}s")
+                if timing_path is not None:
+                    timing_path.parent.mkdir(parents=True, exist_ok=True)
+                    with timing_path.open("a", encoding="utf-8") as fh:
+                        fh.write(f"{elapsed:.6f}\n")
+        return 0
+    sB.set_defaults(func=_cmd_bench_fastcoll)
 
     s6 = sub.add_parser("check-conds", help="使用 tables/block{1,2}.txt 检查 Qt 条件解析与匹配")
     s6.add_argument("--block", type=int, choices=[1,2], required=True)

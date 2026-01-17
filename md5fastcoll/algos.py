@@ -121,8 +121,9 @@ def search_block2_once(
 def search_two_block_collision(
     max_restarts: int = 1000,
     seed: Optional[int] = None,
+    ihv: Tuple[int, int, int, int] = MD5_IV,
 ) -> Tuple[bool, Dict[str, object]]:
-    res = search_collision_full(seed=seed, max_restarts=max_restarts)
+    res = search_collision_full(seed=seed, max_restarts=max_restarts, ihv=ihv)
     if res is None:
         return False, {"restarts": max_restarts, "seed": seed}
     b1, b2 = res

@@ -19,7 +19,127 @@ _RC = (
 _AC = [int(abs(math.sin(i + 1)) * (1 << 32)) & MASK32 for i in range(64)]
 
 QList = List[Optional[int]]
+Symbols = Dict[str, Optional[int]]
 
+@dataclass
+class _PatternSpec:
+    fixed_mask: int
+    fixed_val: int
+    free_bits: List[int]
+    dep_same_mask: int
+    dep_flip_mask: int
+
+
+def _pattern_spec(pat: str) -> _PatternSpec:
+    fixed_mask = 0
+    fixed_val = 0
+    free_bits: List[int] = []
+    dep_same_mask = 0
+    dep_flip_mask = 0
+    for i, ch in enumerate(pat):
+        b = 31 - i
+        if ch == "0":
+            fixed_mask |= (1 << b)
+        elif ch == "1":
+            fixed_mask |= (1 << b)
+            fixed_val |= (1 << b)
+        elif ch == ".":
+            free_bits.append(b)
+        elif ch == "^":
+            dep_same_mask |= (1 << b)
+        elif ch == "!":
+            dep_flip_mask |= (1 << b)
+    return _PatternSpec(
+        fixed_mask=fixed_mask,
+        fixed_val=fixed_val,
+        free_bits=free_bits,
+        dep_same_mask=dep_same_mask,
+        dep_flip_mask=dep_flip_mask,
+    )
+
+
+def _iter_free_masks(bits: List[int]) -> List[int]:
+    masks: List[int] = []
+    total = 1 << len(bits)
+    for i in range(total):
+        m = 0
+        for j, b in enumerate(bits):
+            if (i >> j) & 1:
+                m |= (1 << b)
+        masks.append(m)
+    return masks
+
+
+def _iter_q9_q10_subspace(Q: QList, qc: QConditions) -> List[Tuple[int, int]]:
+    base = 3
+    q8 = Q[base + 8]
+    q11 = Q[base + 11]
+    q9_base = Q[base + 9]
+    q10_base = Q[base + 10]
+    if None in (q8, q11, q9_base, q10_base):
+        return []
+    if 9 not in qc.conds or 10 not in qc.conds:
+        return []
+
+    spec9 = _pattern_spec(qc.conds[9].pattern)
+    spec10 = _pattern_spec(qc.conds[10].pattern)
+    q10_dep_mask = spec10.dep_same_mask | spec10.dep_flip_mask
+
+    q9_free = [
+        b
+        for b in spec9.free_bits
+        if ((q11 >> b) & 1) == 1 and ((q10_dep_mask >> b) & 1) == 0
+    ]
+    q10_free = [b for b in spec10.free_bits if ((q11 >> b) & 1) == 0]
+
+    q9_masks = _iter_free_masks(q9_free)
+    q10_masks = _iter_free_masks(q10_free)
+    pairs: List[Tuple[int, int]] = []
+    # NOTE: keep q10 masks materialized (small) but avoid quadratic pair-list building
+    # at call sites when they can early-exit.
+    for q9_mask in q9_masks:
+        q9 = (q9_base ^ q9_mask) & MASK32
+        for q10_mask in q10_masks:
+            q10 = (q10_base ^ q10_mask) & MASK32
+            pairs.append((q9, q10))
+    return pairs
+
+
+def _forward_q22_q64(
+    Q: QList,
+    m: List[Optional[int]],
+    qc: QConditions,
+    start_t: int = 21,
+    end_t: int = 63,
+    *,
+    symbols: Optional[Symbols] = None,
+) -> Tuple[bool, Dict[str, int]]:
+    base = 3
+    symbols = symbols if symbols is not None else {}
+    issues: Dict[str, int] = {}
+    for t in range(start_t, end_t + 1):
+        idx = wt_index(t)
+        if idx >= len(m) or m[idx] is None:
+            return False, {"missing_m": t}
+        Qt = Q[base + t]
+        Qtm1 = Q[base + t - 1]
+        Qtm2 = Q[base + t - 2]
+        Qtm3 = Q[base + t - 3]
+        if None in (Qt, Qtm1, Qtm2, Qtm3):
+            return False, {"missing_q": t}
+        Tt = (ft(t, Qt, Qtm1, Qtm2) + Qtm3 + _AC[t] + (m[idx] & MASK32)) & MASK32
+        Rt = rl(Tt, _RC[t])
+        Qt1 = (Qt + Rt) & MASK32
+        if (t + 1) in qc.conds and not qc.conds[t + 1].check(Qt1, Qt, symbols):
+            return False, {"bad_q": t + 1}
+        Q[base + t + 1] = Qt1
+        if t == 22 and _bit(Tt, 17) != 0:
+            issues["T22[17]"] = _bit(Tt, 17)
+            return False, issues
+        if t == 34 and _bit(Tt, 15) != 0:
+            issues["T34[15]"] = _bit(Tt, 15)
+            return False, issues
+    return True, issues
 
 def _bit(x: int, b: int) -> int:
     return (x >> b) & 1
@@ -30,12 +150,15 @@ def _choose_Q_with_constraints(
     Q: QList,
     qc: QConditions,
     t: int,
+    *,
+    symbols: Optional[Symbols] = None,
     max_tries: int = 4096,
 ) -> Optional[int]:
     base = 3
     if len(Q) <= base + t + 1:
         return None
 
+    symbols = symbols if symbols is not None else {}
     prev_q = Q[base + t - 1] if (base + t - 1) >= 0 else None
     next_q = Q[base + t + 1] if (base + t + 1) < len(Q) else None
     pat = qc.conds.get(t).pattern if t in qc.conds else None
@@ -63,28 +186,53 @@ def _choose_Q_with_constraints(
                     fixed_val |= (1 << b)
                 else:
                     fixed_val &= ~(1 << b)
+            elif ch in ("I", "J", "K"):
+                key = "I" if ch == "K" else ch
+                bound = symbols.get(key)
+                if bound is None:
+                    continue
+                fixed_mask |= (1 << b)
+                if bound:
+                    fixed_val |= (1 << b)
+                else:
+                    fixed_val &= ~(1 << b)
 
     if next_q is not None and next_pat is not None:
         for i, ch in enumerate(next_pat):
-            if ch not in "^!":
-                continue
             b = 31 - i
-            nv = (next_q >> b) & 1
-            need = nv if ch == "^" else 1 - nv
-            if fixed_mask & (1 << b):
-                if ((fixed_val >> b) & 1) != need:
-                    return None
-            fixed_mask |= (1 << b)
-            if need:
-                fixed_val |= (1 << b)
-            else:
-                fixed_val &= ~(1 << b)
+            if ch in "^!":
+                nv = (next_q >> b) & 1
+                need = nv if ch == "^" else 1 - nv
+                if fixed_mask & (1 << b):
+                    if ((fixed_val >> b) & 1) != need:
+                        return None
+                fixed_mask |= (1 << b)
+                if need:
+                    fixed_val |= (1 << b)
+                else:
+                    fixed_val &= ~(1 << b)
+            elif ch in ("I", "J", "K"):
+                key = "I" if ch == "K" else ch
+                bound = symbols.get(key)
+                if bound is None:
+                    # next_q forces the binding.
+                    symbols[key] = (next_q >> b) & 1
+                    bound = symbols[key]
+                need = bound
+                if fixed_mask & (1 << b):
+                    if ((fixed_val >> b) & 1) != need:
+                        return None
+                fixed_mask |= (1 << b)
+                if need:
+                    fixed_val |= (1 << b)
+                else:
+                    fixed_val &= ~(1 << b)
 
     for _ in range(max_tries):
         qt = rng.getrandbits(32)
         qt = (qt & ~fixed_mask) | fixed_val
         if pat is not None and prev_q is not None:
-            if not qc.conds[t].check(qt, prev_q):
+            if not qc.conds[t].check(qt, prev_q, symbols):
                 continue
         if next_pat is not None and next_q is not None:
             ok = True
@@ -133,8 +281,16 @@ def _compute_W_from_Q(Q: QList, i: int) -> int:
     return Wi
 
 
-def _forward_step_set_Q(Q: QList, m: List[Optional[int]], t: int, qc: Optional[QConditions] = None) -> bool:
+def _forward_step_set_Q(
+    Q: QList,
+    m: List[Optional[int]],
+    t: int,
+    qc: Optional[QConditions] = None,
+    *,
+    symbols: Optional[Symbols] = None,
+) -> bool:
     base = 3
+    symbols = symbols if symbols is not None else {}
 
     def _req(idx: int) -> int:
         val = Q[base + idx]
@@ -152,7 +308,7 @@ def _forward_step_set_Q(Q: QList, m: List[Optional[int]], t: int, qc: Optional[Q
     Tt = (ft(t, Qt, Qtm1, Qtm2) + Qtm3 + _AC[t] + (m[idx] & MASK32)) & MASK32
     Qt1 = (Qt + rl(Tt, _RC[t])) & MASK32
     if qc is not None and (t + 1) in qc.conds:
-        if not qc.conds[t + 1].check(Qt1, Qt):
+        if not qc.conds[t + 1].check(Qt1, Qt, symbols):
             return False
     if Q[base + t + 1] is not None and (Q[base + t + 1] & MASK32) != Qt1:
         return False
@@ -192,18 +348,19 @@ class Block1FullSearcher:
         Q[base-3]=IV0; Q[base-2]=IV3; Q[base-1]=IV2; Q[base+0]=IV1
         return Q
 
-    def step1_choose_Qs(self, Q: QList) -> bool:
+    def step1_choose_Qs(self, Q: QList, symbols: Optional[Symbols] = None) -> bool:
         # Algorithm 6-1 Step 1: Choose Q1, Q3, ..., Q16 fulfilling conditions
         # Note: We choose odd Qs first as per paper algorithm description
+        symbols = symbols if symbols is not None else {}
         base = 3
         for t in [1, 3, 5, 7, 9, 11, 13, 15]:
-            qt = _choose_Q_with_constraints(self.rng, Q, self.qc, t)
+            qt = _choose_Q_with_constraints(self.rng, Q, self.qc, t, symbols=symbols)
             if qt is None:
                 return False
             Q[base + t] = qt
         # Then choose even Qs Q4, Q6, Q8, Q10, Q12, Q14, Q16 (Q2 is computed later)
         for t in [4, 6, 8, 10, 12, 14, 16]:
-            qt = _choose_Q_with_constraints(self.rng, Q, self.qc, t)
+            qt = _choose_Q_with_constraints(self.rng, Q, self.qc, t, symbols=symbols)
             if qt is None:
                 return False
             Q[base + t] = qt
@@ -225,10 +382,11 @@ class Block1FullSearcher:
                 return False
         return True
 
-    def step3_loop_Q17_to_Q21(self, Q: QList, m: List[Optional[int]]) -> bool:
+    def step3_loop_Q17_to_Q21(self, Q: QList, m: List[Optional[int]], symbols: Optional[Symbols] = None) -> bool:
         # Algorithm 6-1 Step 3: Loop until Q17, ..., Q21 are fulfilling conditions
         # (a) Choose Q17 fulfilling conditions; (b) Calculate m1 at t=16
         # (c) Calculate Q2 and m2, m3, m4, m5; (d) Calculate Q18, ..., Q21
+        symbols = symbols if symbols is not None else {}
         base = 3
         for _ in range(4096):  # Increased attempts for better success rate
             # reset Q17..Q21 from previous attempts
@@ -238,7 +396,7 @@ class Block1FullSearcher:
             for idx in range(1, 6):
                 m[idx] = None
             # (a) Choose Q17 fulfilling conditions
-            qt17 = _choose_Q_with_constraints(self.rng, Q, self.qc, 17)
+            qt17 = _choose_Q_with_constraints(self.rng, Q, self.qc, 17, symbols=symbols)
             if qt17 is None:
                 continue
             Q[base+17] = qt17
@@ -260,12 +418,12 @@ class Block1FullSearcher:
                 R1 = rl(T1, _RC[1])
                 Q2 = (Q1 + R1) & MASK32
                 # Enforce constraints on Q2 if any
-                if 2 in self.qc.conds and not self.qc.conds[2].check(Q2, Q1):
+                if 2 in self.qc.conds and not self.qc.conds[2].check(Q2, Q1, symbols):
                     continue
                 # Also enforce constraints from Q3 (next)
                 q3 = Q[base + 3]
                 if 3 in self.qc.conds:
-                    if q3 is None or not self.qc.conds[3].check(q3, Q2):
+                    if q3 is None or not self.qc.conds[3].check(q3, Q2, symbols):
                         continue
                 Q[base+2] = Q2
             except Exception:
@@ -286,7 +444,7 @@ class Block1FullSearcher:
             # (e) Calculate Q18..Q21 forward using known message words
             for t in range(17, 21):
                 try:
-                    if not _forward_step_set_Q(Q, m, t, self.qc):
+                    if not _forward_step_set_Q(Q, m, t, self.qc, symbols=symbols):
                         ok = False
                         break
                 except Exception:
@@ -296,31 +454,37 @@ class Block1FullSearcher:
                 return True
         return False
 
-    def step4_q9_q10_subspace(self, ihv: Tuple[int,int,int,int], Q: QList, m: List[Optional[int]], budget: int = 1<<15) -> bool:
-        # Keep m11 constant while exploring Q9/Q10 freedom. Baseline:
+    def step4_q9_q10_subspace(
+        self,
+        ihv: Tuple[int,int,int,int],
+        Q: QList,
+        m: List[Optional[int]],
+        symbols: Optional[Symbols] = None,
+        *,
+        budget: int | None = None,
+    ) -> bool:
+        base = 3
+        symbols = symbols if symbols is not None else {}
         base_m11 = m[11] if m[11] is not None else self._m11_from_Q(Q, m)
         if base_m11 is None:
             return False
-        base = 3
-        for _ in range(budget):
-            old_q9, old_q10 = Q[base+9], Q[base+10]
-            Q[base+10] = None
-            q9 = _choose_Q_with_constraints(self.rng, Q, self.qc, 9)
-            if q9 is None:
-                Q[base+10] = old_q10
-                continue
-            Q[base+9] = q9
-            q10 = _choose_Q_with_constraints(self.rng, Q, self.qc, 10)
-            if q10 is None:
-                Q[base+9] = old_q9
-                Q[base+10] = old_q10
-                continue
-            old_m = {idx: m[idx] for idx in (8, 9, 10, 12, 13)}
-            Q[base+9], Q[base+10] = q9, q10
+        old_q9, old_q10 = Q[base + 9], Q[base + 10]
+        if old_q9 is None or old_q10 is None:
+            return False
+
+        pairs = _iter_q9_q10_subspace(Q, self.qc)
+        if not pairs:
+            return False
+
+        old_m = {idx: m[idx] for idx in (8, 9, 10, 12, 13)}
+        iters = 0
+        for q9, q10 in pairs:
+            iters += 1
+            if budget is not None and iters > budget:
+                break
+            Q[base + 9], Q[base + 10] = q9, q10
             if self._m11_from_Q(Q, m) != base_m11:
-                Q[base+9], Q[base+10] = old_q9, old_q10
                 continue
-            # Recompute affected m words deterministically via reverse steps t=8,9,10,12,13
             ok = True
             for t in (8, 9, 10, 12, 13):
                 try:
@@ -331,25 +495,37 @@ class Block1FullSearcher:
                 idx = wt_index(t)
                 m[idx] = wt
             if not ok:
-                Q[base+9], Q[base+10] = old_q9, old_q10
                 for idx, val in old_m.items():
                     m[idx] = val
                 continue
-            words = _materialize_m(m)
-            if words is None:
-                Q[base+9], Q[base+10] = old_q9, old_q10
+            ok_fwd, _ = _forward_q22_q64(Q, m, self.qc, symbols=dict(symbols))
+            if not ok_fwd:
                 for idx, val in old_m.items():
                     m[idx] = val
                 continue
-            ihv2, trace = compress_block(ihv, words)
-            ok_q, _ = self.qc.check_all(trace["Q"], base=3)
-            ok_tail, _ = check_T_restrictions_tail(trace)
+            IV0 = Q[base - 3]
+            IV1 = Q[base + 0]
+            IV2 = Q[base - 1]
+            IV3 = Q[base - 2]
+            if None in (IV0, IV1, IV2, IV3):
+                for idx, val in old_m.items():
+                    m[idx] = val
+                continue
+            ihv2 = (
+                (IV0 + Q[base + 61]) & MASK32,
+                (IV1 + Q[base + 64]) & MASK32,
+                (IV2 + Q[base + 63]) & MASK32,
+                (IV3 + Q[base + 62]) & MASK32,
+            )
             ok_iv, _ = check_next_block_iv_conditions(ihv2)
-            if ok_q and ok_tail and ok_iv:
+            if ok_iv:
                 return True
-            Q[base+9], Q[base+10] = old_q9, old_q10
             for idx, val in old_m.items():
                 m[idx] = val
+
+        Q[base + 9], Q[base + 10] = old_q9, old_q10
+        for idx, val in old_m.items():
+            m[idx] = val
         return False
 
     def _m11_from_Q(self, Q: QList, m: List[Optional[int]]) -> Optional[int]:
@@ -381,13 +557,14 @@ class Block1FullSearcher:
         for _ in range(max_restarts):
             Q = self._init_Q(ihv)
             m: List[Optional[int]] = [None]*16
-            if not self.step1_choose_Qs(Q):
+            symbols: Symbols = {}
+            if not self.step1_choose_Qs(Q, symbols):
                 continue
             if not self.step2_compute_m0_to_m15(Q, m):
                 continue
-            if not self.step3_loop_Q17_to_Q21(Q, m):
+            if not self.step3_loop_Q17_to_Q21(Q, m, symbols):
                 continue
-            if not self.step4_q9_q10_subspace(ihv, Q, m):
+            if not self.step4_q9_q10_subspace(ihv, Q, m, symbols):
                 continue
             words = _materialize_m(m)
             if words is None:
@@ -409,11 +586,12 @@ class Block2FullSearcher:
         Q[base-3]=IV0; Q[base-2]=IV3; Q[base-1]=IV2; Q[base+0]=IV1
         return Q
 
-    def step1_choose_Q2_to_Q16(self, Q: QList) -> bool:
+    def step1_choose_Q2_to_Q16(self, Q: QList, symbols: Optional[Symbols] = None) -> bool:
         # Algorithm 6-2 Step 1: Choose Q2, ..., Q16 fulfilling conditions 
+        symbols = symbols if symbols is not None else {}
         base = 3
         for t in range(2, 17):
-            qt = _choose_Q_with_constraints(self.rng, Q, self.qc, t)
+            qt = _choose_Q_with_constraints(self.rng, Q, self.qc, t, symbols=symbols)
             if qt is None:
                 return False
             Q[base + t] = qt
@@ -431,10 +609,11 @@ class Block2FullSearcher:
                 return False
         return True
 
-    def step3_loop_Q1_and_m0_to_m4(self, Q: QList, m: List[Optional[int]]) -> bool:
+    def step3_loop_Q1_and_m0_to_m4(self, Q: QList, m: List[Optional[int]], symbols: Optional[Symbols] = None) -> bool:
         # Algorithm 6-2 Step 3: Loop until Q17, ..., Q21 are fulfilling conditions
         # (a) Choose Q1 fulfilling conditions; (b) Calculate m0, ..., m4
         # (c) Calculate Q17, ..., Q21
+        symbols = symbols if symbols is not None else {}
         base = 3
         for _ in range(4096):
             Q[base + 1] = None
@@ -443,7 +622,7 @@ class Block2FullSearcher:
             for idx in range(0, 5):
                 m[idx] = None
             # (a) Choose Q1 fulfilling conditions
-            q1 = _choose_Q_with_constraints(self.rng, Q, self.qc, 1)
+            q1 = _choose_Q_with_constraints(self.rng, Q, self.qc, 1, symbols=symbols)
             if q1 is None:
                 continue
             Q[base+1] = q1
@@ -463,7 +642,7 @@ class Block2FullSearcher:
             # (c) Calculate Q17, ..., Q21 forward
             for t in range(16, 21):
                 try:
-                    if not _forward_step_set_Q(Q, m, t, self.qc):
+                    if not _forward_step_set_Q(Q, m, t, self.qc, symbols=symbols):
                         ok = False
                         break
                 except Exception:
@@ -473,31 +652,31 @@ class Block2FullSearcher:
                 return True
         return False
 
-    def step4_q9_q10_subspace(self, ihv: Tuple[int,int,int,int], Q: QList, m: List[Optional[int]], budget: int = 1<<15) -> bool:
-        # Same idea: keep f11 constant via Q11 bits relationship
+    def step4_q9_q10_subspace(
+        self,
+        ihv: Tuple[int,int,int,int],
+        Q: QList,
+        m: List[Optional[int]],
+        symbols: Optional[Symbols] = None,
+    ) -> bool:
         base_m11 = m[11] if m[11] is not None else self._m11_from_Q(Q, m)
         if base_m11 is None:
             return False
+        symbols = symbols if symbols is not None else {}
         base = 3
-        for _ in range(budget):
-            old_q9, old_q10 = Q[base+9], Q[base+10]
-            Q[base+10] = None
-            q9 = _choose_Q_with_constraints(self.rng, Q, self.qc, 9)
-            if q9 is None:
-                Q[base+10] = old_q10
-                continue
-            Q[base+9] = q9
-            q10 = _choose_Q_with_constraints(self.rng, Q, self.qc, 10)
-            if q10 is None:
-                Q[base+9] = old_q9
-                Q[base+10] = old_q10
-                continue
-            old_m = {idx: m[idx] for idx in (8, 9, 10, 12, 13)}
-            Q[base+9], Q[base+10] = q9, q10
+        old_q9, old_q10 = Q[base + 9], Q[base + 10]
+        if old_q9 is None or old_q10 is None:
+            return False
+
+        pairs = _iter_q9_q10_subspace(Q, self.qc)
+        if not pairs:
+            return False
+
+        old_m = {idx: m[idx] for idx in (8, 9, 10, 12, 13)}
+        for q9, q10 in pairs:
+            Q[base + 9], Q[base + 10] = q9, q10
             if self._m11_from_Q(Q, m) != base_m11:
-                Q[base+9], Q[base+10] = old_q9, old_q10
                 continue
-            # Update affected m words deterministically (t=8,9,10,12,13)
             ok = True
             for t in (8, 9, 10, 12, 13):
                 try:
@@ -508,24 +687,18 @@ class Block2FullSearcher:
                 idx = wt_index(t)
                 m[idx] = wt
             if not ok:
-                Q[base+9], Q[base+10] = old_q9, old_q10
                 for idx, val in old_m.items():
                     m[idx] = val
                 continue
-            words = _materialize_m(m)
-            if words is None:
-                Q[base+9], Q[base+10] = old_q9, old_q10
-                for idx, val in old_m.items():
-                    m[idx] = val
-                continue
-            ihv2, trace = compress_block(ihv, words)
-            ok_q, _ = self.qc.check_all(trace["Q"], base=3)
-            ok_tail, _ = check_T_restrictions_tail(trace)
-            if ok_q and ok_tail:
+            ok_fwd, _ = _forward_q22_q64(Q, m, self.qc, symbols=dict(symbols))
+            if ok_fwd:
                 return True
-            Q[base+9], Q[base+10] = old_q9, old_q10
             for idx, val in old_m.items():
                 m[idx] = val
+
+        Q[base + 9], Q[base + 10] = old_q9, old_q10
+        for idx, val in old_m.items():
+            m[idx] = val
         return False
 
     def _m11_from_Q(self, Q: QList, m: List[Optional[int]]) -> Optional[int]:
@@ -545,13 +718,14 @@ class Block2FullSearcher:
         for _ in range(max_restarts):
             Q = self._init_Q(ihv)
             m: List[Optional[int]] = [None]*16
-            if not self.step1_choose_Q2_to_Q16(Q):
+            symbols: Symbols = {}
+            if not self.step1_choose_Q2_to_Q16(Q, symbols):
                 continue
             if not self.step2_compute_m5_to_m15(Q, m):
                 continue
-            if not self.step3_loop_Q1_and_m0_to_m4(Q, m):
+            if not self.step3_loop_Q1_and_m0_to_m4(Q, m, symbols):
                 continue
-            if not self.step4_q9_q10_subspace(ihv, Q, m):
+            if not self.step4_q9_q10_subspace(ihv, Q, m, symbols):
                 continue
             words = _materialize_m(m)
             if words is None:
@@ -561,15 +735,21 @@ class Block2FullSearcher:
         return None
 
 
-def search_collision_full(seed: Optional[int] = None, max_restarts: int = 1000) -> Optional[Tuple[BlockResult, BlockResult]]:
+def search_collision_full(
+    seed: Optional[int] = None,
+    max_restarts: int = 1000,
+    ihv: Tuple[int, int, int, int] = MD5_IV,
+    block1_restarts: int = 50,
+    block2_restarts: int = 100,
+) -> Optional[Tuple[BlockResult, BlockResult]]:
     rng = random.Random(seed)
     b1 = Block1FullSearcher(rng)
     for _ in range(max_restarts):
-        r1 = b1.search(MD5_IV, max_restarts=50)
+        r1 = b1.search(ihv, max_restarts=block1_restarts)
         if not r1:
             continue
         b2 = Block2FullSearcher(rng)
-        r2 = b2.search(r1.ihv, max_restarts=100)
+        r2 = b2.search(r1.ihv, max_restarts=block2_restarts)
         if r2:
             return (r1, r2)
     return None
