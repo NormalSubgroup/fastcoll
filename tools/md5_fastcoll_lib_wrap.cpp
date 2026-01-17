@@ -1,3 +1,6 @@
+// Wrapper for HashClash md5fastcoll sources.
+// Source repository https://github.com/cr-marcstevens/hashclash
+// Used by md5fastcoll build-native-lib and the ctypes engine.
 #include <iostream>
 #include <streambuf>
 #include "main.hpp"
@@ -69,4 +72,3 @@ extern "C" void md5fastcoll_find_blocks(
 
     std::cout.rdbuf(oldbuf);
 }
-

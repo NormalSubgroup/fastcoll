@@ -1,3 +1,11 @@
+"""
+HashClash md5_fastcoll compatible implementation using Numba JIT.
+
+Sources
+- HashClash repository https://github.com/cr-marcstevens/hashclash
+- Code under src/md5fastcoll such as block1wang.cpp and block1stevens*.cpp
+"""
+
 from __future__ import annotations
 
 import os

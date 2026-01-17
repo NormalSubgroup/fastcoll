@@ -1,3 +1,11 @@
+"""
+HashClash md5_fastcoll compatible implementation in Python.
+
+Sources
+- HashClash repository https://github.com/cr-marcstevens/hashclash
+- Code under src/md5fastcoll such as block0.cpp, block1wang.cpp, block1stevens*.cpp, md5.cpp
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
