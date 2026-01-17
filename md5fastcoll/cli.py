@@ -362,9 +362,6 @@ def main(argv: List[str] | None = None) -> int:
     s11.add_argument("--native-bin", type=str, default=None, help="本地 md5_fastcoll 可执行文件路径（或使用 MD5_FASTCOLL_BIN）")
     s11.add_argument("--native-lib", type=str, default=None, help="HashClash md5fastcoll 共享库路径（ctypes 引擎；或使用 MD5_FASTCOLL_LIB）")
     s11.add_argument("--jobs", type=int, default=0, help="python 引擎并行进程数（0=自动；指定 --seed 时默认 1）")
-    s11.add_argument("--restarts", type=int, default=1000)
-    s11.add_argument("--block1-restarts", type=int, default=50)
-    s11.add_argument("--block2-restarts", type=int, default=100)
     s11.add_argument("--quiet", "-q", action="store_true")
     s11.set_defaults(func=cmd_fastcoll)
 

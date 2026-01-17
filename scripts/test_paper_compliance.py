@@ -3,23 +3,28 @@
 全面测试脚本，验证实现与Stevens MD5 Fast Collision论文的匹配度
 """
 
-import sys
 import argparse
+import hashlib
+import random
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
 
-from md5fastcoll.core import MD5_IV, compress_block, ft, wt_index
-from md5fastcoll.conditions import minimal_block1_q_constraints, minimal_block2_q_constraints
-from md5fastcoll.verify import check_T_restrictions_full, check_next_block_iv_conditions, check_recommended_iv_conditions
-from md5fastcoll.stevens_full import Block1FullSearcher, Block2FullSearcher, search_collision_full
-from md5fastcoll.md5 import md5_hex
-import hashlib
-import random
+__test__ = False  # prevent pytest from collecting/running this script as a test module
 
-def test_md5_core_functionality():
+
+def _ensure_project_root_on_syspath() -> None:
+    root = str(ROOT)
+    if root not in sys.path:
+        sys.path.insert(0, root)
+
+
+def check_md5_core_functionality():
     """测试MD5核心函数与标准实现一致性"""
+    _ensure_project_root_on_syspath()
+    from md5fastcoll.md5 import md5_hex
+
     print("=" * 60)
     print("测试1: MD5核心函数一致性")
     print("=" * 60)
@@ -47,8 +52,12 @@ def test_md5_core_functionality():
     print(f"\nMD5核心测试: {'全部通过' if all_pass else '存在问题'}")
     return all_pass
 
-def test_condition_loading():
+
+def check_condition_loading():
     """测试条件表加载"""
+    _ensure_project_root_on_syspath()
+    from md5fastcoll.conditions import minimal_block1_q_constraints, minimal_block2_q_constraints
+
     print("=" * 60)
     print("测试2: 条件表加载验证")
     print("=" * 60)
@@ -78,8 +87,13 @@ def test_condition_loading():
     print(f"条件表加载: {'成功' if sample_valid and len(qc1.conds) > 10 else '存在问题'}")
     return sample_valid and len(qc1.conds) > 10
 
-def test_T_restrictions():
+
+def check_T_restrictions():
     """测试T限制验证"""
+    _ensure_project_root_on_syspath()
+    from md5fastcoll.core import MD5_IV, compress_block
+    from md5fastcoll.verify import check_T_restrictions_full
+
     print("=" * 60)
     print("测试3: T限制验证")
     print("=" * 60)
@@ -107,8 +121,13 @@ def test_T_restrictions():
     print(f"T限制验证: {'正常' if ok else '存在问题'}")
     return ok
 
-def test_iv_conditions():
+
+def check_iv_conditions():
     """测试IV推荐条件"""
+    _ensure_project_root_on_syspath()
+    from md5fastcoll.core import MD5_IV
+    from md5fastcoll.verify import check_recommended_iv_conditions
+
     print("=" * 60)
     print("测试4: IV推荐条件验证")
     print("=" * 60)
@@ -134,8 +153,14 @@ def test_iv_conditions():
     
     return ok_rec
 
-def test_algorithm_6_1():
+
+def check_algorithm_6_1():
     """测试算法6-1实现"""
+    _ensure_project_root_on_syspath()
+    from md5fastcoll.core import MD5_IV
+    from md5fastcoll.stevens_full import Block1FullSearcher
+    from md5fastcoll.verify import check_next_block_iv_conditions
+
     print("=" * 60)
     print("测试5: 算法6-1 Block1搜索")
     print("=" * 60)
@@ -161,8 +186,12 @@ def test_algorithm_6_1():
         print("✗ Block1搜索失败 (在5次重启内)")
         return False
 
-def test_algorithm_6_2():
+
+def check_algorithm_6_2():
     """测试算法6-2实现"""
+    _ensure_project_root_on_syspath()
+    from md5fastcoll.stevens_full import Block2FullSearcher
+
     print("=" * 60)
     print("测试6: 算法6-2 Block2搜索")
     print("=" * 60)
@@ -184,8 +213,12 @@ def test_algorithm_6_2():
         print("✗ Block2搜索失败 (在5次重启内)")
         return False
 
-def test_full_collision():
+
+def check_full_collision():
     """测试完整的两块碰撞搜索"""
+    _ensure_project_root_on_syspath()
+    from md5fastcoll.stevens_full import search_collision_full
+
     print("=" * 60)
     print("测试7: 完整两块碰撞搜索")
     print("=" * 60)
@@ -216,16 +249,16 @@ def main():
     
     test_results = []
     test_functions = [
-        ("MD5核心功能", test_md5_core_functionality),
-        ("条件表加载", test_condition_loading),
-        ("T限制验证", test_T_restrictions),
-        ("IV推荐条件", test_iv_conditions),
+        ("MD5核心功能", check_md5_core_functionality),
+        ("条件表加载", check_condition_loading),
+        ("T限制验证", check_T_restrictions),
+        ("IV推荐条件", check_iv_conditions),
     ]
     if not args.skip_search:
         test_functions.extend([
-            ("算法6-1", test_algorithm_6_1),
-            ("算法6-2", test_algorithm_6_2),
-            ("完整碰撞搜索", test_full_collision),
+            ("算法6-1", check_algorithm_6_1),
+            ("算法6-2", check_algorithm_6_2),
+            ("完整碰撞搜索", check_full_collision),
         ])
     
     for test_name, test_func in test_functions:

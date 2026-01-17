@@ -4,6 +4,7 @@ __pycache__/
 .pytest_cache/
 fastcoll.txt
 *.skill
+tools/*.bin
 tools/md5_fastcoll
 tools/md5_fastcoll_lib.*
 tools/bin/

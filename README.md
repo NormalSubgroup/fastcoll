@@ -24,8 +24,8 @@
   - （无需 make / 纯 Python；安装依赖即可跑到接近原生速度）：
     - pip install -U numpy numba
     - python -m md5fastcoll.cli fastcoll --engine python --seed 123 -q -o msg1.bin msg2.bin
-  - python -m md5fastcoll.cli fastcoll --restarts 1000 --out msg1.bin msg2.bin
-  - python -m md5fastcoll.cli fastcoll --prefixfile prefix.bin --restarts 2000
+  - python -m md5fastcoll.cli fastcoll --out msg1.bin msg2.bin
+  - python -m md5fastcoll.cli fastcoll --prefixfile prefix.bin
   - （推荐，更快）构建并使用原生 `md5_fastcoll`：
     - python -m md5fastcoll.cli build-native
     - python -m md5fastcoll.cli fastcoll --engine native --prefixfile prefix.bin
