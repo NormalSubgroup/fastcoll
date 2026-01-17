@@ -32,6 +32,33 @@ fastcoll 子命令支持三种引擎
   - build-native 会拉取 HashClash 源码并编译
   - 需要本机有 make 与 autotools 工具链
 
+## 性能
+
+基准配置
+
+- seed: 123
+- IHV: 0123456789abcdeffedcba9876543210
+- prefixfile: 无
+
+环境
+
+- OS: Darwin 23.6.0
+- 体系结构: arm64
+- Python: 3.11.12
+- NumPy: 1.26.4
+- Numba: 0.59.1
+
+结果
+
+| 引擎 | wall time 秒 | 相对 native |
+| --- | --- | --- |
+| native | 4.80 | 1.00 |
+| python | 17.25 | 3.59 |
+
+说明
+
+- python 引擎首次运行可能更慢，因为需要 JIT 编译
+
 ## 快速开始
 
 - 校验核心 MD5 与 hashlib 一致
