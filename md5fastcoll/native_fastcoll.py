@@ -74,6 +74,11 @@ def run_md5_fastcoll(
     if seed is not None:
         seed1 = seed & 0xFFFFFFFF
         seed2 = (seed >> 32) & 0xFFFFFFFF
+        # HashClash rng64() has a degenerate all-zero state. Match the behavior
+        # used by the Python engine and the ctypes wrapper: if both halves are
+        # zero, force seed2 to a nonzero constant.
+        if seed1 == 0 and seed2 == 0:
+            seed2 = 0x12345678
         cmd += ["--seed1", str(seed1), "--seed2", str(seed2)]
 
     if prefixfile is not None:
